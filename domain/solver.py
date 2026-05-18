@@ -41,6 +41,7 @@ class SolverResult:
     Q_total: float
     effectiveness: float
     T_air_out: np.ndarray           # [n_rows, n_cols]  各セル出口空気温度 [°C]
+    T_water_grid: np.ndarray        # [n_rows, n_cols]  各管出口水温 [°C]
     T_water_out_per_pass: dict[int, float]
     Q_cell: np.ndarray              # [n_rows, n_cols]  局所熱交換量 [W]
     UA_cell: float
@@ -185,7 +186,8 @@ def run(
     # col=0 が入口 (一様)、col=nc が出口
     T_air_grid = np.full((nr, nc + 1), air_cond.T_in)
 
-    Q_cell     = np.zeros((nr, nc))
+    Q_cell        = np.zeros((nr, nc))
+    T_water_grid  = np.full((nr, nc), water_inlet.T_in)
     T_water_state: dict[int, float] = {}   # pass_id → 現在の水温
     pass_initialized: set[int] = set()     # 初期化済みパスID
     T_water_out_per_pass: dict[int, float] = {}
@@ -239,6 +241,7 @@ def run(
                 )
                 T_air_grid[row, col + 1] = T_air_out
                 Q_cell[row, col]         = Q
+                T_water_grid[row, col]   = T_w_out
                 T_water_state[p.pass_id] = T_w_out
                 ptr += 1
 
@@ -276,6 +279,7 @@ def run(
         Q_total=Q_total,
         effectiveness=effectiveness,
         T_air_out=T_air_grid[:, 1:],
+        T_water_grid=T_water_grid,
         T_water_out_per_pass=T_water_out_per_pass,
         Q_cell=Q_cell,
         UA_cell=UA,

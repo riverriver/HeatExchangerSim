@@ -129,6 +129,22 @@ def make_serpentine(n_rows: int, n_cols: int) -> PassConfiguration:
     return PassConfiguration(passes=[Pass(pass_id=0, tube_sequence=sequence)])
 
 
+def make_series_passes(n_rows: int, n_cols: int) -> PassConfiguration:
+    """
+    直列2パス。前半コラムをPass0、後半コラムをPass1とし直列接続。
+    n_cols は偶数であること。
+    """
+    if n_cols % 2 != 0:
+        raise ValueError("直列2パスにはn_colsが偶数である必要があります")
+    half = n_cols // 2
+    seq0 = [(row, col) for col in range(half) for row in range(n_rows)]
+    seq1 = [(row, col) for col in range(half, n_cols) for row in range(n_rows)]
+    return PassConfiguration(passes=[
+        Pass(pass_id=0, tube_sequence=seq0),
+        Pass(pass_id=1, tube_sequence=seq1, inlet_source=0),
+    ])
+
+
 def make_parallel_passes(n_rows: int, n_cols: int, n_passes: int) -> PassConfiguration:
     """
     n_passes 本の並列パス。各パスが n_cols/n_passes 列ずつ担当する。
