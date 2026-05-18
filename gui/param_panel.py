@@ -5,9 +5,9 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QGroupBox, QLabel, QDoubleSpinBox, QSpinBox,
-    QComboBox, QPushButton, QMessageBox,
+    QWidget, QVBoxLayout, QFormLayout,
+    QGroupBox, QDoubleSpinBox, QSpinBox,
+    QComboBox, QPushButton, QMessageBox, QLabel,
 )
 
 from domain.geometry import TubeGeometry, FinGeometry
@@ -48,12 +48,17 @@ def _int(val: int, lo: int, hi: int) -> QSpinBox:
 
 
 class ParamPanel(QWidget):
-    run_requested = pyqtSignal(object)  # SimConfig を送出
+    run_requested     = pyqtSignal(object)  # SimConfig
+    geometry_changed  = pyqtSignal()        # n_rows/n_cols/配列 変化時
+    pass_preset_changed = pyqtSignal()      # パスタイプ変化時
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         root = QVBoxLayout(self)
         root.setSpacing(6)
+
+        # カスタムパス (パスエディターから受け取る)
+        self._custom_pass_cfg: PassConfiguration | None = None
 
         # ---- 管形状 -------------------------------------------------------
         grp_tube = QGroupBox("管形状 (Tube Geometry)")
@@ -65,24 +70,24 @@ class ParamPanel(QWidget):
         self.sb_St     = _dbl(0.025, 0.01,  0.1,   3, 0.001)
         self.sb_nrows  = _int(4, 1, 20)
         self.sb_ncols  = _int(4, 1, 20)
-        fl.addRow("管外径 do [m]",      self.sb_do)
-        fl.addRow("管内径 di [m]",      self.sb_di)
-        fl.addRow("管長さ L [m]",       self.sb_length)
-        fl.addRow("縦ピッチ Sl [m]",    self.sb_Sl)
-        fl.addRow("横ピッチ St [m]",    self.sb_St)
-        fl.addRow("段数 n_rows",        self.sb_nrows)
-        fl.addRow("列数 n_cols",        self.sb_ncols)
+        fl.addRow("管外径 do [m]",   self.sb_do)
+        fl.addRow("管内径 di [m]",   self.sb_di)
+        fl.addRow("管長さ L [m]",    self.sb_length)
+        fl.addRow("縦ピッチ Sl [m]", self.sb_Sl)
+        fl.addRow("横ピッチ St [m]", self.sb_St)
+        fl.addRow("段数 n_rows",     self.sb_nrows)
+        fl.addRow("列数 n_cols",     self.sb_ncols)
         root.addWidget(grp_tube)
 
         # ---- フィン形状 ---------------------------------------------------
         grp_fin = QGroupBox("フィン形状 (Fin Geometry)")
         fl2 = QFormLayout(grp_fin)
-        self.sb_fp    = _dbl(0.002,  0.0005, 0.01,  4, 0.0005)
-        self.sb_ft    = _dbl(0.0001, 0.00005, 0.001, 5, 0.00005)
-        self.sb_kfin  = _dbl(205.0,  10.0, 500.0,   1, 10.0)
-        fl2.addRow("フィンピッチ [m]",   self.sb_fp)
-        fl2.addRow("フィン厚さ [m]",     self.sb_ft)
-        fl2.addRow("熱伝導率 [W/m·K]",  self.sb_kfin)
+        self.sb_fp   = _dbl(0.002,  0.0005, 0.01,  4, 0.0005)
+        self.sb_ft   = _dbl(0.0001, 0.00005, 0.001, 5, 0.00005)
+        self.sb_kfin = _dbl(205.0,  10.0, 500.0,   1, 10.0)
+        fl2.addRow("フィンピッチ [m]",  self.sb_fp)
+        fl2.addRow("フィン厚さ [m]",    self.sb_ft)
+        fl2.addRow("熱伝導率 [W/m·K]", self.sb_kfin)
         root.addWidget(grp_fin)
 
         # ---- 水側条件 -----------------------------------------------------
@@ -90,15 +95,15 @@ class ParamPanel(QWidget):
         fl3 = QFormLayout(grp_water)
         self.sb_Tw_in = _dbl(60.0,  0.0, 200.0, 1, 1.0)
         self.sb_Qw    = _dbl(0.100, 0.001, 10.0, 3, 0.01)
-        fl3.addRow("入口温度 [°C]",  self.sb_Tw_in)
-        fl3.addRow("流量 [kg/s]",    self.sb_Qw)
+        fl3.addRow("入口温度 [°C]", self.sb_Tw_in)
+        fl3.addRow("流量 [kg/s]",   self.sb_Qw)
         root.addWidget(grp_water)
 
         # ---- 空気側条件 ---------------------------------------------------
         grp_air = QGroupBox("空気側条件 (Air Side)")
         fl4 = QFormLayout(grp_air)
-        self.sb_Ta_in = _dbl(25.0, -20.0, 60.0,  1, 1.0)
-        self.sb_vel   = _dbl(2.0,   0.1,  20.0,  2, 0.1)
+        self.sb_Ta_in = _dbl(25.0, -20.0, 60.0, 1, 1.0)
+        self.sb_vel   = _dbl(2.0,   0.1,  20.0, 2, 0.1)
         fl4.addRow("入口温度 [°C]",  self.sb_Ta_in)
         fl4.addRow("前面風速 [m/s]", self.sb_vel)
         root.addWidget(grp_air)
@@ -112,7 +117,10 @@ class ParamPanel(QWidget):
         fl5.addRow("管配列", self.cb_arrangement)
 
         self.cb_pass_type = QComboBox()
-        self.cb_pass_type.addItems(["蛇行 (serpentine)", "並列 (parallel)", "直列2パス (series)"])
+        self.cb_pass_type.addItems([
+            "蛇行 (serpentine)", "並列 (parallel)",
+            "直列2パス (series)", "カスタム (エディターから)",
+        ])
         fl5.addRow("パスタイプ", self.cb_pass_type)
 
         self.sb_n_parallel = _int(2, 2, 8)
@@ -135,18 +143,48 @@ class ParamPanel(QWidget):
         # シグナル接続
         self.cb_pass_type.currentIndexChanged.connect(self._on_pass_type_changed)
         self.cb_arrangement.currentIndexChanged.connect(self._on_arrangement_changed)
+        self.sb_nrows.valueChanged.connect(self._on_geometry_changed)
+        self.sb_ncols.valueChanged.connect(self._on_geometry_changed)
+        self.cb_arrangement.currentIndexChanged.connect(self._on_geometry_changed)
         self.btn_run.clicked.connect(self._on_run_clicked)
 
     # ------------------------------------------------------------------
+    # 外部インターフェース (パスエディターとの同期)
+    # ------------------------------------------------------------------
+    def set_custom_pass_config(self, cfg: PassConfiguration) -> None:
+        """パスエディターで手動定義されたパス設定を受け取る。"""
+        self._custom_pass_cfg = cfg
+        # "カスタム" に切り替え (シグナルを抑制して循環を防ぐ)
+        self.cb_pass_type.blockSignals(True)
+        self.cb_pass_type.setCurrentIndex(3)
+        self.cb_pass_type.blockSignals(False)
+
+    def build_config_for_editor(self) -> SimConfig:
+        """パスエディター初期化用: パス設定も含む SimConfig を返す (例外あり)。"""
+        return self._build_config(skip_pass_validation=True)
+
+    # ------------------------------------------------------------------
+    # スロット
+    # ------------------------------------------------------------------
     def _on_pass_type_changed(self, idx: int) -> None:
-        self.sb_n_parallel.setEnabled(idx == 1)  # 並列のみ有効
+        self.sb_n_parallel.setEnabled(idx == 1)
+        if idx != 3:
+            self._custom_pass_cfg = None
+        self.pass_preset_changed.emit()
 
     def _on_arrangement_changed(self, idx: int) -> None:
-        # 正方配列では混合モードを NONE に固定
         is_inline = idx == 1
         self.cb_mixing.setEnabled(not is_inline)
         if is_inline:
-            self.cb_mixing.setCurrentIndex(2)  # NONE
+            self.cb_mixing.setCurrentIndex(2)
+
+    def _on_geometry_changed(self) -> None:
+        self._custom_pass_cfg = None
+        if self.cb_pass_type.currentIndex() == 3:
+            self.cb_pass_type.blockSignals(True)
+            self.cb_pass_type.setCurrentIndex(0)
+            self.cb_pass_type.blockSignals(False)
+        self.geometry_changed.emit()
 
     def _on_run_clicked(self) -> None:
         try:
@@ -156,11 +194,16 @@ class ParamPanel(QWidget):
             return
         self.run_requested.emit(cfg)
 
-    def _build_config(self) -> SimConfig:
+    # ------------------------------------------------------------------
+    # 設定ビルド
+    # ------------------------------------------------------------------
+    def _build_config(self, skip_pass_validation: bool = False) -> SimConfig:
         do = self.sb_do.value()
         di = self.sb_di.value()
         if di >= do:
-            raise ValueError(f"管内径 di ({di*1000:.1f} mm) は外径 do ({do*1000:.1f} mm) より小さくする必要があります")
+            raise ValueError(
+                f"管内径 di ({di*1000:.1f} mm) は外径 do ({do*1000:.1f} mm) より小さくする必要があります"
+            )
 
         fp = self.sb_fp.value()
         ft = self.sb_ft.value()
@@ -174,7 +217,6 @@ class ParamPanel(QWidget):
 
         nr = self.sb_nrows.value()
         nc = self.sb_ncols.value()
-
         arrangement: str = "staggered" if self.cb_arrangement.currentIndex() == 0 else "inline"
 
         tube = TubeGeometry(
@@ -182,33 +224,53 @@ class ParamPanel(QWidget):
             Sl=Sl, St=St, n_rows=nr, n_cols=nc,
             arrangement=arrangement,
         )
-        fin = FinGeometry(
-            pitch=fp, thickness=ft, k_fin=self.sb_kfin.value(),
-        )
+        fin = FinGeometry(pitch=fp, thickness=ft, k_fin=self.sb_kfin.value())
 
-        pass_type_idx = self.cb_pass_type.currentIndex()
-        if pass_type_idx == 0:
-            pass_cfg = make_serpentine(nr, nc)
-        elif pass_type_idx == 1:
-            n_par = self.sb_n_parallel.value()
-            if nc % n_par != 0:
-                raise ValueError(f"列数 ({nc}) は並列パス数 ({n_par}) の倍数にしてください")
-            pass_cfg = make_parallel_passes(nr, nc, n_par)
-        else:
-            if nc % 2 != 0:
-                raise ValueError(f"直列2パスには列数 ({nc}) を偶数にしてください")
-            pass_cfg = make_series_passes(nr, nc)
+        pass_cfg = self._build_pass_config(nr, nc, skip_pass_validation)
 
-        mixing_map = {0: LateralMixingMode.STREAM, 1: LateralMixingMode.SIMPLE, 2: LateralMixingMode.NONE}
+        mixing_map = {
+            0: LateralMixingMode.STREAM,
+            1: LateralMixingMode.SIMPLE,
+            2: LateralMixingMode.NONE,
+        }
         solver_cfg = SolverConfig(mixing_mode=mixing_map[self.cb_mixing.currentIndex()])
 
         return SimConfig(
-            tube=tube,
-            fin=fin,
-            air_prop=AIR,
-            water_prop=WATER,
+            tube=tube, fin=fin,
+            air_prop=AIR, water_prop=WATER,
             air_cond=AirCondition(T_in=self.sb_Ta_in.value(), velocity=self.sb_vel.value()),
             water_inlet=WaterInlet(T_in=self.sb_Tw_in.value(), flow_rate=self.sb_Qw.value()),
             pass_config=pass_cfg,
             solver_cfg=solver_cfg,
         )
+
+    def _build_pass_config(
+        self, nr: int, nc: int, skip_validation: bool
+    ) -> PassConfiguration:
+        idx = self.cb_pass_type.currentIndex()
+
+        if idx == 3:  # カスタム
+            if self._custom_pass_cfg is not None:
+                return self._custom_pass_cfg
+            # カスタムが未設定ならフォールバック
+            return make_serpentine(nr, nc)
+
+        if idx == 0:
+            return make_serpentine(nr, nc)
+
+        if idx == 1:
+            n_par = self.sb_n_parallel.value()
+            if not skip_validation and nc % n_par != 0:
+                raise ValueError(f"列数 ({nc}) は並列パス数 ({n_par}) の倍数にしてください")
+            try:
+                return make_parallel_passes(nr, nc, n_par)
+            except ValueError:
+                return make_serpentine(nr, nc)
+
+        # idx == 2: 直列
+        if not skip_validation and nc % 2 != 0:
+            raise ValueError(f"直列2パスには列数 ({nc}) を偶数にしてください")
+        try:
+            return make_series_passes(nr, nc)
+        except ValueError:
+            return make_serpentine(nr, nc)
