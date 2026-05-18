@@ -1,0 +1,50 @@
+# ==========================================
+# Pythonプロジェクト用 .gitignore 記載例
+# ==========================================
+
+# --- 1. 仮想環境 (Virtual Environments) ---
+# パッケージの実体はGit管理に含めず、requirements.txt等で共有します
+.venv/
+venv/
+env/
+ENV/
+.hexSim/
+
+
+# --- 2. キャッシュ・自動生成ファイル ---
+# Pythonの実行やテスト時に自動生成される一時ファイルです
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- 3. ビルド・配布用成果物 ---
+# パッケージ化（ビルド）の際に出力されるフォルダです
+build/
+dist/
+*.egg-info/
+
+# --- 4. 環境変数・機密情報 ---
+# パスワードやAPIキーなどの漏洩を防ぐため、必ず除外します
+.env
+.env.local
+*.pod
+
+# --- 5. エディタ・IDE設定 ---
+# 開発者個人の環境依存設定を除外します
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# --- 6. OS固有の一時ファイル ---
+.DS_Store
+Thumbs.db
