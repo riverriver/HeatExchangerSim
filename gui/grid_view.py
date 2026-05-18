@@ -46,7 +46,7 @@ class GridView(QWidget):
         layout.addWidget(self._placeholder)
 
         # matplotlib figure (最初は非表示)
-        self._fig = plt.figure(figsize=(10, 5))
+        self._fig = plt.figure(figsize=(10, 5), constrained_layout=True)
         self._canvas = FigureCanvasQTAgg(self._fig)
         self._toolbar = NavigationToolbar2QT(self._canvas, self)
         layout.addWidget(self._toolbar)
@@ -70,8 +70,7 @@ class GridView(QWidget):
         gs = GridSpec(
             1, 4,
             figure=self._fig,
-            width_ratios=[10, 0.4, 0.4, 0.4],
-            wspace=0.05,
+            width_ratios=[10, 0.35, 0.35, 0.35],
         )
         ax      = self._fig.add_subplot(gs[0, 0])
         cax_air = self._fig.add_subplot(gs[0, 1])
@@ -165,6 +164,7 @@ class GridView(QWidget):
         self._draw_pass_arrows(ax, pass_cfg, tube, stagger_offset)
 
         # ---- 軸設定 -----------------------------------------------------
+        ax.set_aspect("equal", adjustable="box")
         ax.set_xlim(-0.2, nc + 0.2)
         ax.set_ylim(-0.3, nr + 0.8 if stagger_offset > 0 else nr + 0.2)
         ax.set_xlabel("コラム (空気流れ方向 →)", fontsize=9)
