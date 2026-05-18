@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Any
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
@@ -13,7 +14,7 @@ from PyQt6.QtWidgets import (
 from domain.geometry import TubeGeometry, FinGeometry
 from domain.fluid import FluidProperties, WaterInlet, AirCondition, AIR, WATER
 from domain.pass_config import (
-    PassConfiguration,
+    Pass, PassConfiguration,
     make_serpentine, make_parallel_passes, make_series_passes,
 )
 from domain.solver import SolverConfig, LateralMixingMode
@@ -274,3 +275,118 @@ class ParamPanel(QWidget):
             return make_series_passes(nr, nc)
         except ValueError:
             return make_serpentine(nr, nc)
+
+    # ------------------------------------------------------------------
+    # JSON シリアライズ / デシリアライズ
+    # ------------------------------------------------------------------
+    def to_dict(self) -> dict[str, Any]:
+        """全パラメータを JSON 互換の dict に変換する。"""
+        custom_pass = None
+        if self._custom_pass_cfg is not None:
+            custom_pass = {
+                "passes": [
+                    {
+                        "pass_id": p.pass_id,
+                        "tube_sequence": [list(t) for t in p.tube_sequence],
+                        "inlet_source": p.inlet_source,
+                    }
+                    for p in self._custom_pass_cfg.passes
+                ]
+            }
+        return {
+            "version": 1,
+            "tube": {
+                "do": self.sb_do.value(),
+                "di": self.sb_di.value(),
+                "length": self.sb_length.value(),
+                "Sl": self.sb_Sl.value(),
+                "St": self.sb_St.value(),
+                "n_rows": self.sb_nrows.value(),
+                "n_cols": self.sb_ncols.value(),
+                "arrangement": "staggered" if self.cb_arrangement.currentIndex() == 0 else "inline",
+            },
+            "fin": {
+                "pitch": self.sb_fp.value(),
+                "thickness": self.sb_ft.value(),
+                "k_fin": self.sb_kfin.value(),
+            },
+            "water": {
+                "T_in": self.sb_Tw_in.value(),
+                "flow_rate": self.sb_Qw.value(),
+            },
+            "air": {
+                "T_in": self.sb_Ta_in.value(),
+                "velocity": self.sb_vel.value(),
+            },
+            "pass_type_idx": self.cb_pass_type.currentIndex(),
+            "n_parallel": self.sb_n_parallel.value(),
+            "mixing_idx": self.cb_mixing.currentIndex(),
+            "custom_pass": custom_pass,
+        }
+
+    def from_dict(self, d: dict[str, Any]) -> None:
+        """dict から全ウィジェットの値を復元する。"""
+        # ウィジェット変更シグナルを一時抑制して連鎖を防ぐ
+        def _set_dbl(sb: QDoubleSpinBox, v: float) -> None:
+            sb.blockSignals(True); sb.setValue(v); sb.blockSignals(False)
+
+        def _set_int(sb: QSpinBox, v: int) -> None:
+            sb.blockSignals(True); sb.setValue(v); sb.blockSignals(False)
+
+        def _set_cb(cb: QComboBox, v: int) -> None:
+            cb.blockSignals(True); cb.setCurrentIndex(v); cb.blockSignals(False)
+
+        tube = d.get("tube", {})
+        _set_dbl(self.sb_do,     tube.get("do",     0.010))
+        _set_dbl(self.sb_di,     tube.get("di",     0.008))
+        _set_dbl(self.sb_length, tube.get("length", 0.500))
+        _set_dbl(self.sb_Sl,     tube.get("Sl",     0.025))
+        _set_dbl(self.sb_St,     tube.get("St",     0.025))
+        _set_int(self.sb_nrows,  tube.get("n_rows", 4))
+        _set_int(self.sb_ncols,  tube.get("n_cols", 4))
+        arr = tube.get("arrangement", "staggered")
+        _set_cb(self.cb_arrangement, 0 if arr == "staggered" else 1)
+
+        fin = d.get("fin", {})
+        _set_dbl(self.sb_fp,   fin.get("pitch",     0.002))
+        _set_dbl(self.sb_ft,   fin.get("thickness", 0.0001))
+        _set_dbl(self.sb_kfin, fin.get("k_fin",     205.0))
+
+        water = d.get("water", {})
+        _set_dbl(self.sb_Tw_in, water.get("T_in",      60.0))
+        _set_dbl(self.sb_Qw,    water.get("flow_rate", 0.1))
+
+        air = d.get("air", {})
+        _set_dbl(self.sb_Ta_in, air.get("T_in",     25.0))
+        _set_dbl(self.sb_vel,   air.get("velocity", 2.0))
+
+        _set_int(self.sb_n_parallel, d.get("n_parallel", 2))
+        _set_cb(self.cb_mixing,      d.get("mixing_idx", 0))
+
+        custom = d.get("custom_pass")
+        if custom:
+            passes = [
+                Pass(
+                    pass_id=p["pass_id"],
+                    tube_sequence=[tuple(t) for t in p["tube_sequence"]],  # type: ignore[arg-type]
+                    inlet_source=p.get("inlet_source"),
+                )
+                for p in custom["passes"]
+            ]
+            try:
+                self._custom_pass_cfg = PassConfiguration(passes=passes)
+                _set_cb(self.cb_pass_type, 3)
+            except ValueError:
+                self._custom_pass_cfg = None
+                _set_cb(self.cb_pass_type, d.get("pass_type_idx", 0))
+        else:
+            self._custom_pass_cfg = None
+            _set_cb(self.cb_pass_type, d.get("pass_type_idx", 0))
+
+        # inline の場合は mixing を NONE に
+        if self.cb_arrangement.currentIndex() == 1:
+            _set_cb(self.cb_mixing, 2)
+            self.cb_mixing.setEnabled(False)
+        else:
+            self.cb_mixing.setEnabled(True)
+        self.sb_n_parallel.setEnabled(self.cb_pass_type.currentIndex() == 1)

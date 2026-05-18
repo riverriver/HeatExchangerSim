@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout,
     QSplitter, QScrollArea, QTabWidget,
-    QMessageBox, QStatusBar,
+    QMessageBox, QStatusBar, QFileDialog,
 )
 from PyQt6.QtCore import Qt
 
@@ -14,6 +18,7 @@ from gui.param_panel import ParamPanel, SimConfig
 from gui.grid_view import GridView
 from gui.pass_editor import PassEditor
 from gui.result_panel import ResultPanel
+from gui.sweep_panel import SweepPanel
 
 
 class MainWindow(QMainWindow):
@@ -48,9 +53,12 @@ class MainWindow(QMainWindow):
         self._pass_editor  = PassEditor()
         self._result_panel = ResultPanel()
 
+        self._sweep_panel = SweepPanel(get_config=self._get_sim_config)
+
         self._tabs.addTab(self._grid_view,    "グリッドビュー")
         self._tabs.addTab(self._pass_editor,  "パスエディター")
         self._tabs.addTab(self._result_panel, "計算結果")
+        self._tabs.addTab(self._sweep_panel,  "パラメトリックスイープ")
 
         splitter.addWidget(self._tabs)
         splitter.setSizes([320, 1120])
@@ -59,6 +67,20 @@ class MainWindow(QMainWindow):
         self._status = QStatusBar()
         self.setStatusBar(self._status)
         self._status.showMessage("準備完了")
+
+        # ---- メニューバー -------------------------------------------------
+        menu_bar = self.menuBar()
+        file_menu = menu_bar.addMenu("ファイル(&F)")
+
+        act_open = QAction("開く(&O)…", self)
+        act_open.setShortcut("Ctrl+O")
+        act_open.triggered.connect(self._on_open)
+        file_menu.addAction(act_open)
+
+        act_save = QAction("保存(&S)…", self)
+        act_save.setShortcut("Ctrl+S")
+        act_save.triggered.connect(self._on_save)
+        file_menu.addAction(act_save)
 
         # ---- シグナル接続 -------------------------------------------------
         # ParamPanel → PassEditor: ジオメトリ変更時にグリッドを更新
@@ -104,6 +126,44 @@ class MainWindow(QMainWindow):
         """パスエディターで手動編集されたらパラメータパネルに通知。"""
         self._param_panel.set_custom_pass_config(pass_cfg)
         self._status.showMessage("パス設定を更新しました")
+
+    # ------------------------------------------------------------------
+    def _get_sim_config(self) -> SimConfig | None:
+        """SweepPanel から呼ばれる: 現在の SimConfig を返す。"""
+        try:
+            return self._param_panel._build_config()
+        except Exception:
+            return None
+
+    def _on_open(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "設定ファイルを開く", "", "JSON Files (*.json);;All Files (*)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            self._param_panel.from_dict(data)
+            self._sync_editor_geometry()
+            self._status.showMessage(f"読み込みました: {Path(path).name}")
+        except Exception as exc:
+            QMessageBox.critical(self, "読み込みエラー", str(exc))
+
+    def _on_save(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "設定ファイルを保存", "hx_config.json",
+            "JSON Files (*.json);;All Files (*)"
+        )
+        if not path:
+            return
+        try:
+            data = self._param_panel.to_dict()
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            self._status.showMessage(f"保存しました: {Path(path).name}")
+        except Exception as exc:
+            QMessageBox.critical(self, "保存エラー", str(exc))
 
     # ------------------------------------------------------------------
     def _on_run(self, cfg: SimConfig) -> None:
