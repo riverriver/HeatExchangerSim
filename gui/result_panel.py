@@ -18,7 +18,7 @@ import matplotlib.gridspec as mgridspec
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QGroupBox, QFrame,
+    QLabel, QGroupBox, QFrame, QSizePolicy,
 )
 from PyQt6.QtCore import Qt
 
@@ -27,21 +27,25 @@ from domain.pass_config import PassConfiguration
 from domain.solver import SolverResult
 
 
-class MetricLabel(QWidget):
+class MetricLabel(QFrame):
     """ラベル + 値を縦に並べたシンプルな表示ウィジェット"""
     def __init__(self, title: str, unit: str = "") -> None:
         super().__init__()
+        self.setFrameShape(QFrame.Shape.Box)
+        self.setFrameShadow(QFrame.Shadow.Sunken)
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(2)
 
         self._title = QLabel(title)
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._title.setStyleSheet("color: gray; font-size: 10px;")
+        self._title.setWordWrap(True)
 
         self._val = QLabel("—")
         self._val.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._val.setStyleSheet("font-size: 16px; font-weight: bold;")
+        self._val.setStyleSheet("font-size: 15px; font-weight: bold;")
 
         self._unit = QLabel(unit)
         self._unit.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -51,9 +55,7 @@ class MetricLabel(QWidget):
         layout.addWidget(self._val)
         layout.addWidget(self._unit)
 
-        frame = QFrame(self)
-        frame.setFrameShape(QFrame.Shape.Box)
-        frame.setStyleSheet("background: transparent;")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
     def set_value(self, text: str) -> None:
         self._val.setText(text)
