@@ -15,6 +15,33 @@ from .fluid import FluidProperties
 # 空気側熱伝達率
 # ---------------------------------------------------------------------------
 
+def _sigma_and_umax(
+    tube: TubeGeometry,
+    fin: FinGeometry,
+    velocity_face: float,
+) -> tuple[float, float]:
+    """
+    最小断面積比 σ と最大速度 u_max を返す。
+    プレートフィンの場合、フィンと管の両方が流路を塞ぐ。
+    σ = (St - do)(fp - ft) / (St · fp)
+    """
+    fp = fin.pitch
+    ft = fin.thickness
+    sigma = (tube.St - tube.do) * (fp - ft) / (tube.St * fp)
+    sigma = max(sigma, 0.05)  # ゼロ除算ガード
+    return sigma, velocity_face / sigma
+
+
+def _hydraulic_diameter(tube: TubeGeometry, fin: FinGeometry) -> float:
+    """
+    フィン間流路の水力直径 [m]
+    Dh = 2·(St-do)·(fp-ft) / ((St-do) + (fp-ft))  (矩形チャンネル近似)
+    """
+    w = tube.St - tube.do
+    h = fin.pitch - fin.thickness
+    return 2 * w * h / (w + h)
+
+
 def h_air_staggered(
     tube: TubeGeometry,
     fin: FinGeometry,
@@ -23,29 +50,13 @@ def h_air_staggered(
 ) -> float:
     """
     千鳥配列の空気側熱伝達率 [W/m²·K]
-    Chang & Wang (1997) ルーバーフィン相関の平滑フィン近似版。
-    平滑プレートフィンに対してはコルバーン j 因子で評価する。
+    平滑プレートフィンに対する Colburn j 因子 (Chang & Wang 簡易版)。
     """
-    # 最小断面での最大速度
-    sigma = 1 - math.pi * tube.do / (4 * tube.St)  # 正面面積比 (簡易)
-    u_max = velocity_face / sigma
-
-    # 水力直径 (プレートフィン)
-    A_fin_per_tube = 2 * (tube.St * tube.Sl - math.pi * tube.do**2 / 4)
-    A_bare_per_tube = math.pi * tube.do * (fin.pitch - fin.thickness)
-    A_total_per_tube = A_fin_per_tube + A_bare_per_tube
-    Dh = 4 * (tube.St - tube.do) * (fin.pitch - fin.thickness) / (
-        2 * ((tube.St - tube.do) + (fin.pitch - fin.thickness))
-    )
-
+    _, u_max = _sigma_and_umax(tube, fin, velocity_face)
+    Dh = _hydraulic_diameter(tube, fin)
     Re_Dh = air.rho * u_max * Dh / air.mu
-
-    # Colburn j 因子 (平滑プレートフィン, 千鳥配列)
-    # Chang & Wang 簡易式: j ≈ 0.086 Re^(-0.45)
-    j = 0.086 * Re_Dh**(-0.45)
-
-    h = j * air.rho * u_max * air.cp / air.Pr ** (2 / 3)
-    return max(h, 1.0)  # 下限ガード
+    j = 0.086 * Re_Dh ** (-0.45)
+    return max(j * air.rho * u_max * air.cp / air.Pr ** (2 / 3), 1.0)
 
 
 def h_air_inline(
@@ -56,21 +67,13 @@ def h_air_inline(
 ) -> float:
     """
     正方配列の空気側熱伝達率 [W/m²·K]
-    McQuiston (1978) 相関の簡易形。
+    McQuiston (1978) 簡易 j 因子。
     """
-    sigma = 1 - math.pi * tube.do / (4 * tube.St)
-    u_max = velocity_face / sigma
-
-    Dh = 4 * (tube.St - tube.do) * (fin.pitch - fin.thickness) / (
-        2 * ((tube.St - tube.do) + (fin.pitch - fin.thickness))
-    )
+    _, u_max = _sigma_and_umax(tube, fin, velocity_face)
+    Dh = _hydraulic_diameter(tube, fin)
     Re_Dh = air.rho * u_max * Dh / air.mu
-
-    # McQuiston 簡易 j 因子 (正方配列)
-    j = 0.0675 * Re_Dh**(-0.40)
-
-    h = j * air.rho * u_max * air.cp / air.Pr ** (2 / 3)
-    return max(h, 1.0)
+    j = 0.0675 * Re_Dh ** (-0.40)
+    return max(j * air.rho * u_max * air.cp / air.Pr ** (2 / 3), 1.0)
 
 
 def h_air(
@@ -177,20 +180,27 @@ def cell_UA(
 ) -> float:
     """
     1セル (管1本分) の総括熱通過率 UA [W/K]
+
+    面積の定義:
+      A_fin, A_bare は 1フィンピッチあたりの値 → n_fins 倍で管長全体の面積を得る
+      n_fins = tube.length / fin.pitch
     """
     h_a = h_air(tube, fin, air, velocity_face)
     _, eta_o = fin_efficiency(tube, fin, h_a)
     h_w = h_water(tube, water, flow_rate_per_tube)
 
-    # セル伝熱面積
-    A_fin = 2 * (tube.St * tube.Sl - math.pi * (tube.do / 2) ** 2)
-    A_bare = math.pi * tube.do * (fin.pitch - fin.thickness)
-    A_air = eta_o * (A_fin + A_bare)
+    # フィン枚数 (管長全体)
+    n_fins = tube.length / fin.pitch
 
+    # 空気側伝熱面積 (管長全体)
+    A_fin  = 2 * (tube.St * tube.Sl - math.pi * (tube.do / 2) ** 2) * n_fins
+    A_bare = math.pi * tube.do * (fin.pitch - fin.thickness) * n_fins
+    A_total_air = A_fin + A_bare  # η_o * A_total_air が有効空気側面積
+
+    # 水側伝熱面積・管壁熱抵抗 (管長全体)
     A_water = math.pi * tube.di * tube.length
+    R_wall  = math.log(tube.do / tube.di) / (2 * math.pi * tube.k_tube * tube.length)
 
-    # 管壁熱抵抗
-    R_wall = math.log(tube.do / tube.di) / (2 * math.pi * tube.k_tube * tube.length)
-
-    R_total = 1 / (eta_o * h_a * A_air) + R_wall + 1 / (h_w * A_water)
+    # 総括熱抵抗: R = 1/(η_o·h_a·A_total) + R_wall + 1/(h_w·A_water)
+    R_total = 1 / (eta_o * h_a * A_total_air) + R_wall + 1 / (h_w * A_water)
     return 1 / R_total
